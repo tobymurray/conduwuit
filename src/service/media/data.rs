@@ -1,3 +1,5 @@
+use ruma::OwnedUserId;
+
 use crate::Result;
 
 pub trait Data: Send + Sync {
@@ -14,6 +16,8 @@ pub trait Data: Send + Sync {
 	) -> Result<(Option<String>, Option<String>, Vec<u8>)>;
 
 	fn search_mxc_metadata_prefix(&self, mxc: String) -> Result<Vec<Vec<u8>>>;
+
+	fn get_all_media_keys_by_user(&self, user_id: OwnedUserId) -> Result<Vec<Vec<u8>>>;
 
 	fn get_all_media_keys(&self) -> Result<Vec<Vec<u8>>>;
 

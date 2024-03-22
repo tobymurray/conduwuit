@@ -12,7 +12,7 @@ use tokio::{
 };
 use tracing::{debug, error};
 
-use crate::{services, utils, Error, Result};
+use crate::{services, utils::string_from_bytes, Error, Result};
 
 #[derive(Debug)]
 pub struct FileMeta {
@@ -110,6 +110,71 @@ impl Service {
 		}
 	}
 
+	/// Deletes all media in the database and from the media directory by a
+	/// specific user
+	pub async fn delete_from_user(&self, user_id: OwnedUserId) -> Result<u32> {
+		if let Ok(user_keys) = self.db.get_all_media_keys_by_user(user_id.clone()) {
+			if user_keys.is_empty() {
+				error!("User \"{user_id}\" has not uploaded any media.");
+				return Err(Error::bad_database("User has not uploaded any media."));
+			}
+
+			let mut mxc_deletion_count = 0;
+
+			for key in user_keys {
+				let mxc = String::from_utf8_lossy(&key);
+
+				let keys = self.db.search_mxc_metadata_prefix(mxc.to_string())?; // the MXC alone does not determine the file path, it is only the prefix
+
+				for key in keys {
+					let mxc = String::from_utf8_lossy(&key);
+
+					debug!("Deleting MXC {mxc} from database");
+
+					self.delete(mxc.to_string()).await?;
+
+					mxc_deletion_count += 1;
+				}
+			}
+
+			Ok(mxc_deletion_count)
+		} else {
+			error!("Failed to find any media keys for user \"{user_id}\" in our database");
+			Err(Error::bad_database(
+				"Failed to find any media keys for the provided user in our database",
+			))
+		}
+	}
+
+	pub async fn list_all_media_by_user(&self, user_id: OwnedUserId) -> Result<Vec<String>> {
+		if let Ok(keys) = self.db.get_all_media_keys_by_user(user_id.clone()) {
+			if keys.is_empty() {
+				error!("User \"{user_id}\" has not uploaded any media.");
+				return Err(Error::bad_database("User has not uploaded any media."));
+			}
+
+			let mut mxc_list: Vec<String> = vec![];
+
+			for key in keys {
+				let mxc_string = string_from_bytes(&key).map_err(|e| {
+					error!("Failed to convert MXC key to string in database for user \"{user_id}\": {e}");
+					Error::bad_database("Failed to convert MXC key to string in database")
+				})?;
+
+				// TODO: add the file name
+
+				mxc_list.push(mxc_string);
+			}
+
+			Ok(mxc_list)
+		} else {
+			error!("Failed to find any media keys for user \"{user_id}\" in our database");
+			Err(Error::bad_database(
+				"Failed to find any media keys for the provided user in our database",
+			))
+		}
+	}
+
 	/// Uploads or replaces a file thumbnail.
 	#[allow(clippy::too_many_arguments)]
 	pub async fn upload_thumbnail(
@@ -200,7 +265,7 @@ impl Service {
 				let mxc = parts
 					.next()
 					.map(|bytes| {
-						utils::string_from_bytes(bytes).map_err(|e| {
+						string_from_bytes(bytes).map_err(|e| {
 							error!("Failed to parse MXC unicode bytes from our database: {}", e);
 							Error::bad_database("Failed to parse MXC unicode bytes from our database")
 						})
@@ -501,6 +566,8 @@ mod tests {
 		fn delete_file_mxc(&self, _mxc: String) -> Result<()> { todo!() }
 
 		fn search_mxc_metadata_prefix(&self, _mxc: String) -> Result<Vec<Vec<u8>>> { todo!() }
+
+		fn get_all_media_keys_by_user(&self, _user_id: OwnedUserId) -> Result<Vec<Vec<u8>>> { todo!() }
 
 		fn get_all_media_keys(&self) -> Result<Vec<Vec<u8>>> { todo!() }
 

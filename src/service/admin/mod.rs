@@ -94,6 +94,12 @@ enum MediaCommand {
 		event_id: Option<Box<EventId>>,
 	},
 
+	/// Deletes all **uploaded** local media from the specified user.
+	DeleteFromUser {
+		/// User ID to delete all media from
+		user_id: Box<UserId>,
+	},
+
 	/// - Deletes a codeblock list of MXC URLs from our database and on the
 	///   filesystem
 	DeleteList,
@@ -104,6 +110,13 @@ enum MediaCommand {
 		/// - The duration (at or after), e.g. "5m" to delete all media in the
 		///   past 5 minutes
 		duration: String,
+	},
+
+	/// - Lists all **uploaded** local media from the specified user with their
+	///   MXC URLs.
+	ListFromUser {
+		/// User ID to list all media from
+		user_id: Box<UserId>,
 	},
 }
 
@@ -806,6 +819,17 @@ impl Service {
 							));
 						}
 					},
+					MediaCommand::DeleteFromUser {
+						user_id,
+					} => {
+						let deleted_count = services().media.delete_from_user(user_id.into()).await?;
+
+						debug!("Deleted {deleted_count} total media files.");
+
+						return Ok(RoomMessageEventContent::text_plain(format!(
+							"Deleted {deleted_count} total media files.",
+						)));
+					},
 					MediaCommand::DeleteList => {
 						if body.len() > 2 && body[0].trim().starts_with("```") && body.last().unwrap().trim() == "```" {
 							let mxc_list = body.clone().drain(1..body.len() - 1).collect::<Vec<_>>();
@@ -838,6 +862,25 @@ impl Service {
 							"Deleted {} total files.",
 							deleted_count
 						)));
+					},
+					MediaCommand::ListFromUser {
+						user_id,
+					} => {
+						let mxc_list = services().media.list_all_media_by_user(user_id.clone().into()).await?;
+
+						let output_plain = format!(
+							"All MXC URLs {user_id} Uploaded:\n{}",
+							mxc_list.iter().map(ToOwned::to_owned).collect::<Vec<_>>().join("\n")
+						);
+						let output_html = format!(
+							"<table><caption>All MXC URLs {user_id} \
+							 Uploaded</caption>\n<tr><th>URL</th></tr>\n{}</table>",
+							mxc_list.iter().fold(String::new(), |mut output, mxc| {
+								writeln!(output, "<tr><td>{}</td></tr>", mxc).unwrap();
+								output
+							})
+						);
+						RoomMessageEventContent::text_html(output_plain, output_html)
 					},
 				}
 			},

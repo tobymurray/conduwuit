@@ -1,4 +1,4 @@
-use ruma::api::client::error::ErrorKind;
+use ruma::{api::client::error::ErrorKind, OwnedUserId};
 use tracing::debug;
 
 use crate::{
@@ -25,8 +25,12 @@ impl service::media::Data for KeyValueDatabase {
 		self.mediaid_file.insert(&key, &[])?;
 
 		if let Some(user) = sender_user {
-			let key = mxc.as_bytes().to_vec();
-			let user = user.as_bytes().to_vec();
+			let mut key = mxc.as_bytes().to_vec();
+			key.push(0xFF);
+
+			let mut user = user.as_bytes().to_vec();
+			user.push(0xFF);
+
 			self.mediaid_user.insert(&key, &user)?;
 		}
 
@@ -65,6 +69,8 @@ impl service::media::Data for KeyValueDatabase {
 		let mut prefix = mxc.as_bytes().to_vec();
 		prefix.push(0xFF);
 
+		debug!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA prefix: {:?}", prefix);
+
 		let mut keys: Vec<Vec<u8>> = vec![];
 
 		for (key, _) in self.mediaid_file.scan_prefix(prefix) {
@@ -78,6 +84,23 @@ impl service::media::Data for KeyValueDatabase {
 		}
 
 		debug!("Got the following keys: {:?}", keys);
+
+		Ok(keys)
+	}
+
+	fn get_all_media_keys_by_user(&self, user_id: OwnedUserId) -> Result<Vec<Vec<u8>>> {
+		debug!("User ID: {user_id:?}");
+
+		let mut user = user_id.as_bytes().to_vec();
+		user.push(0xFF);
+
+		let mut keys: Vec<Vec<u8>> = vec![];
+
+		for (key, value) in self.mediaid_user.iter() {
+			if value == user {
+				keys.push(key);
+			}
+		}
 
 		Ok(keys)
 	}
