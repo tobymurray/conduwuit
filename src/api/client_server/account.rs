@@ -357,33 +357,7 @@ pub(crate) async fn register_route(body: Ruma<register::v3::Request>) -> Result<
 		&& !services().globals.config.auto_join_rooms.is_empty()
 		&& (services().globals.allow_guests_auto_join_rooms() || !is_guest)
 	{
-		for room in &services().globals.config.auto_join_rooms {
-			if !services()
-				.rooms
-				.state_cache
-				.server_in_room(services().globals.server_name(), room)?
-			{
-				warn!("Skipping room {room} to automatically join as we have never joined before.");
-				continue;
-			}
-
-			if let Some(room_id_server_name) = room.server_name() {
-				if let Err(e) = join_room_by_id_helper(
-					Some(&user_id),
-					room,
-					Some("Automatically joining this room upon registration".to_owned()),
-					&[room_id_server_name.to_owned(), services().globals.server_name().to_owned()],
-					None,
-				)
-				.await
-				{
-					// don't return this error so we don't fail registrations
-					error!("Failed to automatically join room {room} for user {user_id}: {e}");
-				} else {
-					info!("Automatically joined room {room} for user {user_id}");
-				};
-			}
-		}
+		auto_join_rooms(&user_id).await?;
 	}
 
 	Ok(register::v3::Response {
@@ -592,4 +566,41 @@ pub(crate) async fn request_3pid_management_token_via_msisdn_route(
 		ErrorKind::ThreepidDenied,
 		"Third party identifier is not allowed",
 	))
+}
+
+/// Auto joins all the specified users to the rooms listed in the
+/// `auto_join_rooms` config option
+///
+/// TODO: can this be moved somewhere else instead of this file where routes are
+/// typically defined?
+pub(crate) async fn auto_join_rooms(user_id: &UserId) -> Result<()> {
+	for room in &services().globals.config.auto_join_rooms {
+		if !services()
+			.rooms
+			.state_cache
+			.server_in_room(&services().globals.config.server_name, room)?
+		{
+			warn!("Skipping room {room} to automatically join as we have never joined before.");
+			continue;
+		}
+
+		if let Some(room_id_server_name) = room.server_name() {
+			if let Err(e) = join_room_by_id_helper(
+				Some(user_id),
+				room,
+				Some("Automatically joining this room upon registration".to_owned()),
+				&[room_id_server_name.to_owned(), services().globals.config.server_name.clone()],
+				None,
+			)
+			.await
+			{
+				// don't return this error so we don't fail registrations
+				error!("Failed to automatically join room {room} for user {user_id}: {e}");
+			} else {
+				info!("Automatically joined room {room} for user {user_id}");
+			};
+		}
+	}
+
+	Ok(())
 }

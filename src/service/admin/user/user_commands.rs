@@ -1,10 +1,9 @@
 use std::{fmt::Write as _, sync::Arc};
 
 use ruma::{events::room::message::RoomMessageEventContent, OwnedRoomId, UserId};
-use tracing::{error, info, warn};
 
 use crate::{
-	api::client_server::{join_room_by_id_helper, leave_all_rooms, AUTO_GEN_PASSWORD_LENGTH},
+	api::client_server::{auto_join_rooms, leave_all_rooms, AUTO_GEN_PASSWORD_LENGTH},
 	service::admin::{escape_html, get_room_info},
 	services,
 	utils::{self, user_id::user_is_local},
@@ -15,7 +14,7 @@ pub(crate) async fn list(_body: Vec<&str>) -> Result<RoomMessageEventContent> {
 	match services().users.list_local_users() {
 		Ok(users) => {
 			let mut msg = format!("Found {} local user account(s):\n", users.len());
-			msg += &users.join("\n");
+			_ = write!(msg, "{}\n", users.join("\n"));
 			Ok(RoomMessageEventContent::text_plain(&msg))
 		},
 		Err(e) => Ok(RoomMessageEventContent::text_plain(e.to_string())),
@@ -28,15 +27,17 @@ pub(crate) async fn create(
 	let password = password.unwrap_or_else(|| utils::random_string(AUTO_GEN_PASSWORD_LENGTH));
 
 	// Validate user id
-	let user_id =
-		match UserId::parse_with_server_name(username.as_str().to_lowercase(), services().globals.server_name()) {
-			Ok(id) => id,
-			Err(e) => {
-				return Ok(RoomMessageEventContent::text_plain(format!(
-					"The supplied username is not a valid username: {e}"
-				)))
-			},
-		};
+	let user_id = match UserId::parse_with_server_name(
+		username.as_str().to_lowercase(),
+		&services().globals.config.server_name,
+	) {
+		Ok(id) => id,
+		Err(e) => {
+			return Ok(RoomMessageEventContent::text_plain(format!(
+				"The supplied username is not a valid username: {e}"
+			)))
+		},
+	};
 
 	if !user_is_local(&user_id) {
 		return Ok(RoomMessageEventContent::text_plain(format!(
@@ -91,36 +92,7 @@ pub(crate) async fn create(
 	)?;
 
 	if !services().globals.config.auto_join_rooms.is_empty() {
-		for room in &services().globals.config.auto_join_rooms {
-			if !services()
-				.rooms
-				.state_cache
-				.server_in_room(services().globals.server_name(), room)?
-			{
-				warn!("Skipping room {room} to automatically join as we have never joined before.");
-				continue;
-			}
-
-			if let Some(room_id_server_name) = room.server_name() {
-				match join_room_by_id_helper(
-					Some(&user_id),
-					room,
-					Some("Automatically joining this room upon registration".to_owned()),
-					&[room_id_server_name.to_owned(), services().globals.server_name().to_owned()],
-					None,
-				)
-				.await
-				{
-					Ok(_) => {
-						info!("Automatically joined room {room} for user {user_id}");
-					},
-					Err(e) => {
-						// don't return this error so we don't fail registrations
-						error!("Failed to automatically join room {room} for user {user_id}: {e}");
-					},
-				};
-			}
-		}
+		auto_join_rooms(&user_id).await?;
 	}
 
 	// we dont add a device since we're not the user, just the creator
@@ -157,7 +129,7 @@ pub(crate) async fn deactivate(
 		== UserId::parse_with_server_name("conduit", services().globals.server_name()).expect("conduit user exists")
 	{
 		return Ok(RoomMessageEventContent::text_plain(
-			"Not allowed to deactivate the Conduit service account.",
+			"Not allowed to deactivate the conduwuit service account.",
 		));
 	}
 
@@ -193,7 +165,7 @@ pub(crate) async fn reset_password(_body: Vec<&str>, username: String) -> Result
 		};
 
 	// check if user belongs to our server
-	if user_id.server_name() != services().globals.server_name() {
+	if !user_is_local(&user_id) {
 		return Ok(RoomMessageEventContent::text_plain(format!(
 			"User {user_id} does not belong to our server."
 		)));
@@ -239,7 +211,7 @@ pub(crate) async fn deactivate_all(body: Vec<&str>, leave_rooms: bool, force: bo
 			}
 		}
 
-		let mut deactivation_count: u16 = 0;
+		let mut deactivation_count: usize = 0;
 		let mut admins = Vec::new();
 
 		if !force {
@@ -258,7 +230,7 @@ pub(crate) async fn deactivate_all(body: Vec<&str>, leave_rooms: bool, force: bo
 
 		for &user_id in &user_ids {
 			// check if user belongs to our server and skips over non-local users
-			if user_id.server_name() != services().globals.server_name() {
+			if !user_is_local(user_id) {
 				continue;
 			}
 
