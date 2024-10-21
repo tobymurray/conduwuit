@@ -134,7 +134,7 @@ pub(crate) async fn search_events_route(
 		None => 0, // Default to the start
 	};
 
-	let mut results = Vec::new();
+	let mut results = Vec::with_capacity(searches.len());
 	let next_batch = skip.saturating_add(limit);
 
 	for _ in 0..next_batch {
@@ -148,8 +148,8 @@ pub(crate) async fn search_events_route(
 		}
 	}
 
-	let results: Vec<_> = results
-		.into_iter()
+	let final_results: Vec<_> = results
+		.iter()
 		.skip(skip)
 		.stream()
 		.filter_map(|id| services.rooms.timeline.get_pdu_from_id(id).map(Result::ok))
@@ -188,7 +188,7 @@ pub(crate) async fn search_events_route(
 			count: Some(results.len().try_into().unwrap_or_else(|_| uint!(0))),
 			groups: BTreeMap::new(), // TODO
 			next_batch,
-			results,
+			results: final_results,
 			state: room_states,
 			highlights: search_criteria
 				.search_term
